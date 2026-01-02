@@ -5,7 +5,7 @@ import GHC.Plugins
 import LoopLinter.RegPrimitives
 
 exprHasReg :: CoreExpr -> Bool
-exprHasReg expr = go expr
+exprHasReg = go
  where
   go (Var v)
     | isId v =
@@ -13,9 +13,10 @@ exprHasReg expr = go expr
          in case nameModule_maybe name of
               Just mod ->
                 let occ = getOccName name
-                 in any (\(m, o) -> occ == o) registerPrimitives -- Note: we are plainly checking for function names here
-                                                                 -- if a function developed internally has the same name as 
-                                                                 -- one of the primitives here, it will be false negative
+                 in any (\(m, o) -> occ == o) registerPrimitives 
+                 -- Note: we are plainly checking for function names here
+                 -- if a function developed internally has the same name as 
+                 -- one of the primitives here, it will be false negative (loop wont be detected)
               Nothing -> False
   go (Var _) = False
   go (Lit _) = False
@@ -26,7 +27,7 @@ exprHasReg expr = go expr
         NonRec _ rhs -> go rhs || go body
         Rec pairs    -> any (go . snd) pairs || go body
   go (Case scrut _ _ alts) =
-      go scrut || any (\(Alt _ _ rhs) -> go rhs) alts
+      go scrut || all (\(Alt _ _ rhs) -> go rhs) alts
   go (Cast e _) = go e
   go (Tick _ e) = go e
   go (Type _) = False
