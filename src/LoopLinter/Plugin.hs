@@ -8,6 +8,7 @@ import qualified Data.Set as Set
 import GHC.Core
 import GHC.Plugins
 import LoopLinter.HasReg
+import qualified Data.Bifunctor
 
 
 plugin :: Plugin
@@ -20,42 +21,6 @@ plugin =
 install :: [CommandLineOption] -> [CoreToDo] -> CoreM [CoreToDo]
 install _ todos =
   pure (CoreDoPluginPass "Loop Linter (noop)" analyzeModule : todos)
-
-pass :: ModGuts -> CoreM ModGuts
-pass guts = do
-  let binds = mg_binds guts
-      moduleN = moduleNameString (moduleName (mg_module guts))
-
-  mapM_ (analyzeBind moduleN) binds
-
-  pure guts
-
-analyzeBind :: String -> CoreBind -> CoreM ()
-analyzeBind modName = \case
-  NonRec b rhs -> do
-    let name = getOccName b
-        hasReg = exprHasReg rhs
-    liftIO $
-      putStrLn $
-        unwords
-          [ modName ++ "." ++ occNameString name
-          , "::"
-          , if hasReg then "hasReg" else "noReg"
-          ]
-  Rec pairs -> do
-    mapM_
-      ( \(binder, rhs) -> do
-          let name = getOccName binder
-              hasReg = exprHasReg rhs
-          liftIO $
-            putStrLn $
-              unwords
-                [ modName ++ "." ++ occNameString name
-                , "::"
-                , if hasReg then "hasReg" else "noReg"
-                ]
-      )
-      pairs
 
 stripTicks :: CoreExpr -> CoreExpr
 stripTicks (Tick _ e) = stripTicks e
@@ -93,14 +58,14 @@ findProducer varSources v = go v Set.empty
           Just (Left alias) -> go alias (Set.insert curr visited)
 
 showEitherId :: Either Id Id -> String
-showEitherId (Left i) = "Left " ++ occNameString (getOccName i)
-showEitherId (Right i) = "Right " ++ occNameString (getOccName i)
+showEitherId (Left i) = "Left " ++ showSDocUnsafe (ppr i)
+showEitherId (Right i) = "Right " ++ showSDocUnsafe (ppr i)
 
 collectCallees :: CoreExpr -> Set.Set Id
 collectCallees = \case
-    Var x           -> Set.empty
+    Var x           -> Set.singleton x
     Lit l           -> Set.empty
-    App fun arg     -> collectCallees fun `Set.union` collectCallees arg `Set.union` getFunId fun
+    App fun arg     -> collectArgs fun `Set.union` collectCallees arg
     Lam b body      -> collectCallees body
     Let bind body   -> collectCalleesFromBind bind `Set.union` collectCallees body
     Case scrut b ty alts -> collectCallees scrut `Set.union` Set.unions (map (\(Alt _ _ e) -> collectCallees e) alts)
@@ -109,10 +74,10 @@ collectCallees = \case
     Type ty         -> Set.empty
     Coercion co     -> Set.empty
   where
-    getFunId :: CoreExpr -> Set.Set Id
-    getFunId (Var x) = Set.singleton x
-    getFunId (App fun _) = getFunId fun
-    getFunId _ = Set.empty
+    collectArgs :: CoreExpr -> Set.Set Id
+    collectArgs (Var x) = Set.empty
+    collectArgs (App fun arg) = collectArgs fun `Set.union` collectCallees arg
+    collectArgs _ = Set.empty
 
 collectCalleesFromBind :: CoreBind -> Set.Set Id
 collectCalleesFromBind = \case
@@ -126,7 +91,7 @@ findPrimaryRecBindings = \case
   Lam _ body -> findPrimaryRecBindings body
   Cast expr _ -> findPrimaryRecBindings expr
   Tick _ expr -> findPrimaryRecBindings expr
-  _ -> [] 
+  _ -> []
 
 analyzeModule :: ModGuts -> CoreM ModGuts
 analyzeModule guts = do
@@ -149,12 +114,6 @@ analyzeModule guts = do
         Map.fromList [(caller, exprHasReg rhs) | (caller, rhs) <- topLevelPairs]
 
   liftIO $ do
-    forM_ topLevelPairs $ \(b, rhs) -> do
-      let callMap = Map.fromList (findPrimaryRecBindings rhs)
-      putStrLn $ "CallMap created for " ++ getOccString b
-
-  -- === Loop Detection Logic ===
-  liftIO $ do
     let targetName = "pentariscAlpha"
     forM_ topLevelPairs $ \(b, rhs) -> do
         let name = occNameString (getOccName b)
@@ -163,14 +122,18 @@ analyzeModule guts = do
 
             -- 1. Identify Rec bindings
             let recBinds = findPrimaryRecBindings rhs
+                producerMap = buildProducerMap recBinds
+                callees = map (Data.Bifunctor.second collectCallees) recBinds
+                calleeMap = Map.fromList callees
 
             if null recBinds
               then putStrLn "  No Rec bindings found (loop detection skipped)."
               else do
-                -- Build the Var -> ProducerFunction map
-                forM_ recBinds $ \(b, rhs) -> do
-                  let funcName = case getAppHead rhs of
-                                   Just f -> occNameString (getOccName f)
-                                   Nothing -> "N/A"
-                  putStrLn $ showSDocUnsafe (ppr b) ++ " -> " ++ funcName
+                putStrLn "--- producerMap ---"
+                forM_ (Map.toList producerMap) $ \(lhs, rhsVal) ->
+                  putStrLn $ showSDocUnsafe (ppr lhs) ++ " -> " ++ showEitherId rhsVal
+                putStrLn "--- calleeMap ---"
+                forM_ (Map.toList calleeMap) $ \(lhs, rhsVal) ->
+                  putStrLn $ showSDocUnsafe (ppr lhs) ++ " -> " ++ showSDocUnsafe (ppr rhsVal)
+
   return guts
