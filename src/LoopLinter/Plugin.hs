@@ -51,6 +51,7 @@ analyzeModule guts = do
   -- Define the check function
   let hasRegCheck :: Id -> Bool
       hasRegCheck i = 
+        idHasRegister i ||
         case Map.lookup i directHasReg of
           Just v -> v
           Nothing -> Map.findWithDefault False (idToKey i) globalRegistry

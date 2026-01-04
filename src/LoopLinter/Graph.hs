@@ -19,16 +19,17 @@ breakEdges ::
   (Ord a) =>
   Map.Map a (Either a a) ->
   Map.Map a (Set.Set a) ->
-  (a -> Bool) -> 
+  (a -> Bool) ->
   Map.Map a (Set.Set a)
 breakEdges producerMap calleeMap hasRegCheck = updatedMap
  where
   updatedMap = Map.mapWithKey helper calleeMap
   helper k v = edges
-    where
-      edges = case findProducer producerMap k of
-        Nothing -> v
-        Just f -> if hasRegCheck f
+   where
+    edges = case findProducer producerMap k of
+      Nothing -> v
+      Just f ->
+        if hasRegCheck f
           then Set.empty -- remove edges if function has a reg
           else v
 
