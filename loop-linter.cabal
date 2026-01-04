@@ -3,13 +3,27 @@ name:               loop-linter
 version:            0.1.0.0
 
 library
-  exposed-modules:     LoopLinter.Plugin
-  hs-source-dirs:      src
-  other-modules:       
+  exposed-modules:
+    LoopLinter.Plugin
     LoopLinter.RegPrimitives
     LoopLinter.HasReg
+    LoopLinter.Utils
+    LoopLinter.MapBuilder
+    LoopLinter.Graph
+  hs-source-dirs:      src
   build-depends:
     base >= 4.14 && < 5,
     containers,
     ghc
+  default-language:   Haskell2010
+
+test-suite loop-linter-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  build-depends: 
+    base,
+    containers,
+    loop-linter,
+    HUnit
+  hs-source-dirs: test
   default-language:   Haskell2010

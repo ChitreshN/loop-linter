@@ -18,6 +18,8 @@
 ## TODOs
 
 - [x] Now that we are able to extract ids and func names, extract the vars that are used in the expr (in rhs)
-- [ ] once we have vars, we can proceed to build a graph and then traverse it to find tight loops
+- [x] once we have vars, we can proceed to build a graph 
+- [ ] then traverse it to find tight loops (traversal and detection function)
+- [ ] **Cross-module support for `hasReg`**: Persist `hasReg` information for each module to disk and load it when analyzing importing modules. This ensures combinational loop detection works correctly across module boundaries.
 - [ ] when a loop is detected, give a warning, move on to the next top level binding.
 - [ ] Add a flag to enable/disable the plugin
