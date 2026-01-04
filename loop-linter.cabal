@@ -10,11 +10,14 @@ library
     LoopLinter.Utils
     LoopLinter.MapBuilder
     LoopLinter.Graph
+    LoopLinter.Registry
   hs-source-dirs:      src
   build-depends:
     base >= 4.14 && < 5,
     containers,
-    ghc
+    ghc,
+    directory,
+    filepath
   default-language:   Haskell2010
 
 test-suite loop-linter-test

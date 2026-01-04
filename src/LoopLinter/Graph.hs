@@ -19,19 +19,18 @@ breakEdges ::
   (Ord a) =>
   Map.Map a (Either a a) ->
   Map.Map a (Set.Set a) ->
-  Map.Map a Bool -> 
+  (a -> Bool) -> 
   Map.Map a (Set.Set a)
-breakEdges producerMap calleeMap hasReg = updatedMap
+breakEdges producerMap calleeMap hasRegCheck = updatedMap
  where
   updatedMap = Map.mapWithKey helper calleeMap
   helper k v = edges
     where
       edges = case findProducer producerMap k of
         Nothing -> v
-        Just f -> case hasReg Map.!? f of
-          Just True -> Set.empty -- remove edges if function has a reg
-          Just False -> v
-          Nothing -> v
+        Just f -> if hasRegCheck f
+          then Set.empty -- remove edges if function has a reg
+          else v
 
 detectLoops :: (Ord a) => Map.Map a (Set.Set a) -> [[a]]
 detectLoops graph = filter (not . null) $ snd $ foldl go (Set.empty, []) (Map.keys graph)

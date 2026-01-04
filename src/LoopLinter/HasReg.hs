@@ -4,20 +4,23 @@ import GHC.Core
 import GHC.Plugins
 import LoopLinter.RegPrimitives
 
+idHasRegister :: Id -> Bool
+idHasRegister v = 
+  let name = idName v
+           in case nameModule_maybe name of
+                Just mod ->
+                  let occ = getOccName name
+                   in any (\(m, o) -> occ == o) registerPrimitives 
+                   -- Note: we are plainly checking for function names here
+                   -- if a function developed internally has the same name as 
+                   -- one of the primitives here, it will be false negative (loop wont be detected)
+                Nothing -> False
+
 exprHasReg :: CoreExpr -> Bool
 exprHasReg = go
  where
   go (Var v)
-    | isId v =
-        let name = idName v
-         in case nameModule_maybe name of
-              Just mod ->
-                let occ = getOccName name
-                 in any (\(m, o) -> occ == o) registerPrimitives 
-                 -- Note: we are plainly checking for function names here
-                 -- if a function developed internally has the same name as 
-                 -- one of the primitives here, it will be false negative (loop wont be detected)
-              Nothing -> False
+    | isId v = idHasRegister v
   go (Var _) = False
   go (Lit _) = False
   go (App e1 e2) = go e1 || go e2
