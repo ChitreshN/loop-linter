@@ -1,5 +1,7 @@
+{-# LANGUAGE LambdaCase #-}
 module LoopLinter.Plugin (plugin) where
 
+import Prelude hiding ((<>))
 import Control.Monad (forM_, when)
 import qualified Data.Bifunctor
 import qualified Data.Map as Map
@@ -56,34 +58,33 @@ analyzeModule guts = do
           Just v -> v
           Nothing -> Map.findWithDefault False (idToKey i) globalRegistry
 
-  liftIO $ do
-    forM_ topLevelPairs $ \(b, rhs) -> do
-      let name = occNameString (getOccName b)
-      putStrLn $ "=== Analyzing Loops in " ++ name ++ " ==="
+  putMsg $ text "Loop Linter running on module" <+> text moduleNameStr
 
-      -- 1. Identify Rec bindings
+  forM_ topLevelPairs $ \(b, rhs) -> do
+    let (producerMap, calleeMap) = makeGraph rhs
+        combiGraph = breakEdges producerMap calleeMap hasRegCheck
+        loops = detectLoops combiGraph
+
+    when (not (null loops)) $ do
       let recBinds = findPrimaryRecBindings rhs
           bindMap = Map.fromList recBinds
-          (producerMap, calleeMap) = makeGraph rhs
-          combiGraph = breakEdges producerMap calleeMap hasRegCheck
-          loops = detectLoops combiGraph
-
-      if null loops
-        then putStrLn $ "  No Loops found in " ++ name ++ "."
-        else do
-          putStrLn "--- Loops ---"
-          forM_ loops $ \loop -> do
-            putStrLn "  Cycle detected:"
-            forM_ loop $ \node -> do
-              let name' = occNameString (getOccName node)
-                  loc = getSrcSpan node
-                  locStr = showSDocUnsafe (ppr loc)
-                  func = findProducer producerMap node
-                  funcName = fmap (occNameString . getOccName) func
-              putStrLn $ "    -> " ++ name' ++ " (" ++ locStr ++ ")"
-              putStrLn $ "      Produced by: " ++ fromMaybe "(unknown)" funcName
-
-
-
+          msg = vcat
+            [ text "Combinational Loop detected in" <+> ppr b
+            , nest 2 $ vcat (map (formatLoop bindMap producerMap) loops)
+            ]
+      putMsg msg
 
   return guts
+
+formatLoop :: Map.Map Id CoreExpr -> Map.Map Id (Either Id Id) -> [Id] -> SDoc
+formatLoop bindMap producerMap loop =
+  vcat [ text "Cycle detected:"
+       , nest 4 $ vcat (map formatNode loop)
+       ]
+ where
+  formatNode node =
+    let loc = getSrcSpan node
+        producer = case findProducer producerMap node of
+                     Just f -> text " [Produced by:" <+> ppr f <> text "]"
+                     Nothing -> empty
+    in ppr loc <> colon <+> ppr node <> producer
