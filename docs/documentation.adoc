@@ -47,7 +47,7 @@ The plugin "breaks" edges in the graph based on the `hasReg` property. For each 
 This is a simpler model but has significant trade-offs (see Limitations section).
 
 === 4. Cycle Detection
-Finally, the plugin runs a **Depth-First Search (DFS)** on the processed graph. If it detects a path that visits a node already in the current recursion stack, a combinational loop is reported.
+Finally, the plugin runs **Tarjan's Strongly Connected Components (SCC)** algorithm on the processed graph. This identifies "knots" of mutually dependent signals (cycles) efficiently. Unlike simple path finding, this reports the set of signals involved in the loop, which is often more useful for debugging.
 
 == Usage
 

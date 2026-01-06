@@ -74,11 +74,16 @@ Before cycle detection, we call `breakEdges`. This is the "magic" of the linter.
 
 This is a simpler model but has significant trade-offs (see Limitations section).
 
-=== 5.4. DFS Cycle Detection
-We use a standard DFS with a recursion stack.
+=== 5.4. Component-Based Cycle Detection (Tarjan's)
+We employ **Tarjan's Strongly Connected Components (SCC)** algorithm, accessed via `Data.Graph.stronglyConnComp`.
 
-*   **Visited Set**: Prevents re-analyzing the same subgraph.
-*   **Path Stack**: Keeps track of the current traversal. If we encounter a node already in the stack, we have found a **Combinational Loop**.
+*   **Logic**: Instead of attempting to trace every possible path through a loop (which can be exponentially expensive), we identify "knots" of mutually dependent signals.
+*   **Why Tarjan's?**
+    ** **Efficiency**: It runs in linear time `O(V + E)` , making it significantly faster than path-based searches on dense graphs.
+    ** **Clarity**: When a loop exists, users typically need to know *which group* of signals is involved to insert a register. Reporting the component `{A, B, C}` is often more actionable than listing permutations `A->B->C->A`, `B->C->A->B`, etc.
+*   **Alternatives Considered**:
+    ** **Johnson's Algorithm**: While it finds *all* elementary cycles, it is computationally expensive (exponential worst-case) and produces excessive output for complex loops.
+    ** **Iterative DFS**: Solves stack overflow issues but remains path-oriented, offering less structural insight than SCC.
 
 == 6. Handling Desugared Artifacts
 
