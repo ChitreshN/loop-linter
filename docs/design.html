@@ -458,7 +458,6 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </li>
 <li><a href="#_5_graph_engine_and_cycle_detection">5. Graph Engine and Cycle Detection</a>
 <ul class="sectlevel2">
-<li><a href="#_5_1_the_producer_map">5.1. The Producer Map</a></li>
 <li><a href="#_5_2_the_callee_map_dependency_graph">5.2. The Callee Map (Dependency Graph)</a></li>
 <li><a href="#_5_3_edge_breaking">5.3. Edge Breaking</a></li>
 <li><a href="#_5_4_dfs_cycle_detection">5.4. DFS Cycle Detection</a></li>
@@ -470,7 +469,14 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#_6_2_name_recovery">6.2. Name Recovery</a></li>
 </ul>
 </li>
-<li><a href="#_7_performance_and_optimization">7. Performance and Optimization</a></li>
+<li><a href="#_7_limitations_and_current_shortcomings">7. Limitations and Current Shortcomings</a>
+<ul class="sectlevel2">
+<li><a href="#_1_no_alias_resolution_major_issue">1. No Alias Resolution (Major Issue)</a></li>
+<li><a href="#_2_loss_of_source_names_desugaring">2. Loss of Source Names (Desugaring)</a></li>
+<li><a href="#_3_primitive_detection">3. Primitive Detection</a></li>
+<li><a href="#_4_stale_registry_files">4. Stale Registry Files</a></li>
+</ul>
+</li>
 <li><a href="#_8_summary_of_analysis_workflow">8. Summary of Analysis Workflow</a></li>
 </ul>
 </div>
@@ -609,34 +615,17 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <p>The linter models the hardware as a netlist where wires are nodes and components are edges.</p>
 </div>
 <div class="sect2">
-<h3 id="_5_1_the_producer_map">5.1. The Producer Map</h3>
-<div class="paragraph">
-<p><code>buildProducerMap</code> creates a mapping of <code>Signal &#8594; Producer</code>.
-It uses an <code>Either Id Id</code> structure:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p><strong><code>Left alias</code></strong>: Indicates a direct wire connection (e.g., <code>x = y</code>). The resolver follows these links to find the ultimate source.</p>
-</li>
-<li>
-<p><strong><code>Right func</code></strong>: Indicates the signal is the output of a function/component (e.g., <code>x = mkBPU &#8230;&#8203;</code>).</p>
-</li>
-</ul>
-</div>
-</div>
-<div class="sect2">
 <h3 id="_5_2_the_callee_map_dependency_graph">5.2. The Callee Map (Dependency Graph)</h3>
 <div class="paragraph">
-<p><code>collectCallees</code> identifies every signal a binding depends on.</p>
+<p><code>collectCallees</code> identifies every signal and function a binding depends on.</p>
 </div>
 <div class="ulist">
 <ul>
 <li>
-<p><strong>Head Filtering</strong>: When analyzing <code>x = f a b</code>, we collect <code>{a, b}</code> as dependencies but <strong>ignore</strong> <code>f</code>. Including <code>f</code> in the dependency set would create "false loops" where every call to <code>f</code> depends on the definition of <code>f</code>.</p>
+<p><strong>Dependencies</strong>: When analyzing <code>x = f a b</code>, <code>collectCallees</code> now collects <code>{f, a, b}</code> as dependencies. This embeds the "producer" function directly into the dependency set for each node.</p>
 </li>
 <li>
-<p><strong>Nested Apps</strong>: Core represents <code>f a b</code> as <code>App (App f a) b</code>. The engine recursively descends these nodes to extract all arguments while discarding the leading <code>Var</code> (the function name).</p>
+<p><strong>Nested Apps</strong>: Core represents <code>f a b</code> as <code>App (App f a) b</code>. The engine recursively descends these nodes to extract all arguments and the function head.</p>
 </li>
 </ul>
 </div>
@@ -644,23 +633,23 @@ It uses an <code>Either Id Id</code> structure:</p>
 <div class="sect2">
 <h3 id="_5_3_edge_breaking">5.3. Edge Breaking</h3>
 <div class="paragraph">
-<p>Before cycle detection, we call <code>breakEdges</code>. This is the "magic" of the linter:</p>
+<p>Before cycle detection, we call <code>breakEdges</code>. This is the "magic" of the linter. For each node in the graph, it checks if <strong>any</strong> of its dependencies are sequential (i.e., known registers).</p>
 </div>
 <div class="olist arabic">
 <ol class="arabic">
 <li>
-<p>Iterate through every node in the graph.</p>
+<p>Iterate through every node <code>k</code> and its dependency set <code>v</code> in the graph.</p>
 </li>
 <li>
-<p>Find its <strong>Producer</strong> using the Registry and Local Analysis.</p>
+<p>If <code>any hasRegCheck v</code> is <code>True</code>, it means one of the inputs to <code>k</code> is a registered signal or primitive.</p>
 </li>
 <li>
-<p>If the Producer is <strong>Sequential</strong> (has a register), <strong>delete all incoming edges</strong> to that node.</p>
-</li>
-<li>
-<p>Effectively, this turns a sequential loop into two disconnected paths, which DFS will ignore.</p>
+<p>The logic then <strong>deletes all incoming edges</strong> to node <code>k</code>, effectively making it a source node in the combinational graph.</p>
 </li>
 </ol>
+</div>
+<div class="paragraph">
+<p>This is a simpler model but has significant trade-offs (see Limitations section).</p>
 </div>
 </div>
 <div class="sect2">
@@ -705,7 +694,7 @@ b = case ds of (p, q) -&gt; q</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>The loop detection identifies <code>ds</code> as a node. Since <code>ds</code> is produced by <code>func</code>, if <code>func</code> is combinational, the edges stay. If <code>func</code> is sequential, the edges to <code>ds</code> are broken, and thus <code>a</code> and <code>b</code> also become "safe" nodes.</p>
+<p>The loop detection identifies <code>ds</code> as a node. Since <code>ds</code> is produced by <code>func</code>, its dependency set includes <code>func</code>. If <code>func</code> is sequential, the edges to <code>ds</code> are broken.</p>
 </div>
 </div>
 <div class="sect2">
@@ -717,17 +706,71 @@ b = case ds of (p, q) -&gt; q</code></pre>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_7_performance_and_optimization">7. Performance and Optimization</h2>
+<h2 id="_7_limitations_and_current_shortcomings">7. Limitations and Current Shortcomings</h2>
 <div class="sectionbody">
+<div class="sect2">
+<h3 id="_1_no_alias_resolution_major_issue">1. No Alias Resolution (Major Issue)</h3>
+<div class="paragraph">
+<p>The current <code>breakEdges</code> logic is simpler but <strong>cannot resolve alias chains</strong>.</p>
+</div>
+<div class="paragraph">
+<p>Consider: <code>let z = register 0 i, y = z, x = y</code>.
+Here, <code>x</code> is sequential. However, the linter will only break the graph at <code>z</code>. If there is a loop from <code>x</code> back to <code>i</code>, the path <code>x &#8594; &#8230;&#8203; &#8594; i &#8594; z &#8594; y &#8594; x</code> will be incorrectly reported as a combinational loop. The previous <code>producerMap</code> logic handled this correctly, but has been removed. This is a significant regression that can lead to <strong>false positives</strong>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_2_loss_of_source_names_desugaring">2. Loss of Source Names (Desugaring)</h3>
+<div class="paragraph">
+<p>The most significant limitation is readability regarding variable names. GHC converts Haskell source code into <strong>Core</strong>, which is a much simpler language.</p>
+</div>
 <div class="ulist">
 <ul>
 <li>
-<p><strong>Registry IO</strong>: Loading many small files can be slow. Future versions should use a single binary database with file-locking or a persistent daemon.</p>
+<p><strong>Tuple Unpacking</strong>: Haskell code like <code>(a, b) = myFunc x</code> is desugared into temporary variables.</p>
 </li>
 <li>
-<p><strong>Graph Size</strong>: For large designs like <code>pentariscAlpha</code>, the graph can have thousands of nodes. The use of <code>Data.Map</code> and <code>Data.Set</code> ensures <code>O(log N)</code> lookups, and the DFS is <code>O(V + E)</code>.</p>
+<p><strong>Inlining</strong>: GHC aggressively inlines small definitions. If you define <code>let wire = &#8230;&#8203;</code>, GHC might replace all occurrences of <code>wire</code> with its definition, removing the named node from the graph entirely.</p>
 </li>
 </ul>
+</div>
+<div class="paragraph">
+<p><strong>Result:</strong> The log file often reports cycles involving variables like <code>ds_&#8230;&#8203;</code> or <code>&lt;no location info&gt;</code>. These are compiler-generated intermediate variables.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_3_primitive_detection">3. Primitive Detection</h3>
+<div class="paragraph">
+<p>The plugin relies on a list of known primitives (<code>LoopLinter/RegPrimitives.hs</code>) to identify the base cases of sequential logic.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>If a user defines a custom primitive in Verilog/VHDL and imports it via <code>BlackBox</code>, the plugin will not know it breaks a loop unless it is added to the primitive list.</p>
+</li>
+<li>
+<p>Workaround: Wrap the blackbox in a Haskell function; the plugin will analyze the wrapper, but since the wrapper just calls the blackbox (which looks like a function call), the plugin might assume it&#8217;s combinational (default safety) unless told otherwise.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_4_stale_registry_files">4. Stale Registry Files</h3>
+<div class="paragraph">
+<p>The <code>.loop-linter-store</code> directory accumulates <code>.reginfo</code> files.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>If you rename a module, the old <code>.reginfo</code> file remains.</p>
+</li>
+<li>
+<p>While not usually harmful (keys are fully qualified names), it can lead to clutter.</p>
+</li>
+<li>
+<p><strong>Recommendation:</strong> Periodically clear the <code>.loop-linter-store</code> directory or add a clean step to your build process.</p>
+</li>
+</ul>
+</div>
 </div>
 </div>
 </div>
@@ -746,10 +789,10 @@ b = case ds of (p, q) -&gt; q</code></pre>
 <p><strong>Registry Sync</strong>: Save local results; load results from other modules.</p>
 </li>
 <li>
-<p><strong>Build Graph</strong>: Map signals to their arguments.</p>
+<p><strong>Build Graph</strong>: Map signals to their dependencies.</p>
 </li>
 <li>
-<p><strong>Prune Graph</strong>: Remove edges that pass through nodes where <code>hasRegCheck</code> is True.</p>
+<p><strong>Prune Graph</strong>: Remove edges to nodes that have a registered dependency.</p>
 </li>
 <li>
 <p><strong>Find Cycles</strong>: Run DFS on the pruned graph.</p>
@@ -764,7 +807,7 @@ b = case ds of (p, q) -&gt; q</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-01-05 13:06:34 +0530
+Last updated 2026-01-06 10:59:15 +0530
 </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.3/highlight.min.js"></script>

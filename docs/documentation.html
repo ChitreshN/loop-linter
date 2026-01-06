@@ -454,10 +454,10 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#_usage">Usage</a></li>
 <li><a href="#_limitations_and_current_shortcomings">Limitations and Current Shortcomings</a>
 <ul class="sectlevel2">
-<li><a href="#_1_loss_of_source_names_desugaring">1. Loss of Source Names (Desugaring)</a></li>
-<li><a href="#_2_primitive_detection">2. Primitive Detection</a></li>
-<li><a href="#_3_stale_registry_files">3. Stale Registry Files</a></li>
-<li><a href="#_4_false_positivesnegatives">4. False Positives/Negatives</a></li>
+<li><a href="#_1_no_alias_resolution_major_issue">1. No Alias Resolution (Major Issue)</a></li>
+<li><a href="#_2_loss_of_source_names_desugaring">2. Loss of Source Names (Desugaring)</a></li>
+<li><a href="#_3_primitive_detection">3. Primitive Detection</a></li>
+<li><a href="#_4_stale_registry_files">4. Stale Registry Files</a></li>
 </ul>
 </li>
 <li><a href="#_future_improvements">Future Improvements</a></li>
@@ -518,20 +518,11 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <p><strong>Nodes</strong>: Variables (`Id`s) and function calls.</p>
 </li>
 <li>
-<p><strong>Edges</strong>: Dependencies. If <code>x = f y</code>, there is an edge <code>y &#8594; x</code>.</p>
+<p><strong>Edges</strong>: Dependencies. If <code>x = f y</code>, there is an edge <code>y &#8594; x</code>.
+The graph building logic handles:</p>
 </li>
 <li>
-<p><strong>Producers</strong>: The plugin identifies the "producer" function for every signal (e.g., <code>let x = register 0 y</code> identifies <code>register</code> as the producer of <code>x</code>).</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>The graph building logic handles:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p><strong>Function Applications</strong>: <code>f a b</code> depends on <code>f</code>, <code>a</code>, and <code>b</code>.</p>
+<p><strong>Function Applications</strong>: When analyzing <code>x = f a b</code>, <code>collectCallees</code> now collects <code>{f, a, b}</code> as dependencies. This embeds the "producer" function directly into the dependency set for each node.</p>
 </li>
 <li>
 <p><strong>Let/Case Expressions</strong>: Dependencies are traced through local bindings and case alternatives.</p>
@@ -548,23 +539,23 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <p>A loop is only fatal if it is <strong>combinational</strong>. If a loop passes through a register, it is a valid sequential circuit.</p>
 </div>
 <div class="paragraph">
-<p>The plugin "breaks" edges in the graph based on the <code>hasReg</code> property:</p>
+<p>The plugin "breaks" edges in the graph based on the <code>hasReg</code> property. For each node in the graph, it checks if <strong>any</strong> of its dependencies are sequential (i.e., known registers).</p>
 </div>
 <div class="olist arabic">
 <ol class="arabic">
 <li>
-<p><strong>Primitives</strong>: It checks against a hardcoded list of Clash primitives (e.g., <code>Clash.Prelude.register</code>, <code>mealy</code>, <code>moore</code>, <code>blockRam</code>).</p>
+<p>Iterate through every node <code>k</code> and its dependency set <code>v</code> in the graph.</p>
 </li>
 <li>
-<p><strong>Local Analysis</strong>: It checks if the producer function in the current module was determined to contain a register.</p>
+<p>If <code>any hasRegCheck v</code> is <code>True</code>, it means one of the inputs to <code>k</code> is a registered signal or primitive.</p>
 </li>
 <li>
-<p><strong>Registry Lookup</strong>: It checks the loaded registry for imported functions.</p>
+<p>The logic then <strong>deletes all incoming edges</strong> to node <code>k</code>, effectively making it a source node in the combinational graph.</p>
 </li>
 </ol>
 </div>
 <div class="paragraph">
-<p>If a signal is produced by a registered function, its dependencies are cleared, effectively removing the back-edge in the graph.</p>
+<p>This is a simpler model but has significant trade-offs (see Limitations section).</p>
 </div>
 </div>
 <div class="sect2">
@@ -595,7 +586,17 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <h2 id="_limitations_and_current_shortcomings">Limitations and Current Shortcomings</h2>
 <div class="sectionbody">
 <div class="sect2">
-<h3 id="_1_loss_of_source_names_desugaring">1. Loss of Source Names (Desugaring)</h3>
+<h3 id="_1_no_alias_resolution_major_issue">1. No Alias Resolution (Major Issue)</h3>
+<div class="paragraph">
+<p>The current <code>breakEdges</code> logic is simpler but <strong>cannot resolve alias chains</strong>.</p>
+</div>
+<div class="paragraph">
+<p>Consider: <code>let z = register 0 i, y = z, x = y</code>.
+Here, <code>x</code> is sequential. However, the linter will only break the graph at <code>z</code>. If there is a loop from <code>x</code> back to <code>i</code>, the path <code>x &#8594; &#8230;&#8203; &#8594; i &#8594; z &#8594; y &#8594; x</code> will be incorrectly reported as a combinational loop. This is a significant regression that can lead to <strong>false positives</strong>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_2_loss_of_source_names_desugaring">2. Loss of Source Names (Desugaring)</h3>
 <div class="paragraph">
 <p>The most significant limitation is readability regarding variable names. GHC converts Haskell source code into <strong>Core</strong>, which is a much simpler language.</p>
 </div>
@@ -621,7 +622,7 @@ b       = case ds_d123 of (p,q) -&gt; q</code></pre>
 </div>
 </div>
 <div class="sect2">
-<h3 id="_2_primitive_detection">2. Primitive Detection</h3>
+<h3 id="_3_primitive_detection">3. Primitive Detection</h3>
 <div class="paragraph">
 <p>The plugin relies on a list of known primitives (<code>LoopLinter/RegPrimitives.hs</code>) to identify the base cases of sequential logic.</p>
 </div>
@@ -637,7 +638,7 @@ b       = case ds_d123 of (p,q) -&gt; q</code></pre>
 </div>
 </div>
 <div class="sect2">
-<h3 id="_3_stale_registry_files">3. Stale Registry Files</h3>
+<h3 id="_4_stale_registry_files">4. Stale Registry Files</h3>
 <div class="paragraph">
 <p>The <code>.loop-linter-store</code> directory accumulates <code>.reginfo</code> files.</p>
 </div>
@@ -655,19 +656,6 @@ b       = case ds_d123 of (p,q) -&gt; q</code></pre>
 </ul>
 </div>
 </div>
-<div class="sect2">
-<h3 id="_4_false_positivesnegatives">4. False Positives/Negatives</h3>
-<div class="ulist">
-<ul>
-<li>
-<p><strong>False Positives</strong>: If the plugin fails to identify a register (e.g., complex higher-order function usage wrapping a register), it might report a combinational loop where there is none.</p>
-</li>
-<li>
-<p><strong>False Negatives</strong>: If the graph traversal misses a subtle dependency (e.g., via type-class dictionaries or complex <code>Cast</code> expressions), it might miss a real loop.</p>
-</li>
-</ul>
-</div>
-</div>
 </div>
 </div>
 <div class="sect1">
@@ -676,7 +664,7 @@ b       = case ds_d123 of (p,q) -&gt; q</code></pre>
 <div class="ulist">
 <ul>
 <li>
-<p><strong>Better Name Resolution</strong>: Attempt to trace <code>ds_</code> variables back to their source <code>Let</code> bindings to find user-defined names attached to the tuple consumers.</p>
+<p><strong>Re-introduce Alias Resolution</strong>: A hybrid approach is needed that correctly resolves alias chains without failing on higher-order functions.</p>
 </li>
 <li>
 <p><strong>GHC Warning Integration</strong>: Emit standard GHC warnings/errors instead of writing to a log file, allowing integration with IDEs and <code>-Werror</code>.</p>
@@ -691,7 +679,7 @@ b       = case ds_d123 of (p,q) -&gt; q</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-01-05 13:05:45 +0530
+Last updated 2026-01-06 10:59:25 +0530
 </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.3/highlight.min.js"></script>
