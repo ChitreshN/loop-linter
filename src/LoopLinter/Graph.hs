@@ -3,6 +3,7 @@ module LoopLinter.Graph where
 import qualified Data.Bifunctor
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import qualified Data.Graph as G
 import GHC.Core
 import GHC.Plugins
 import LoopLinter.MapBuilder
@@ -30,30 +31,7 @@ breakEdges producerMap calleeMap hasRegCheck = updatedMap
     in if reg then Set.empty else v
 
 detectLoops :: (Ord a) => Map.Map a (Set.Set a) -> [[a]]
-detectLoops graph = filter (not . null) $ snd $ foldl go (Set.empty, []) (Map.keys graph)
+detectLoops graph = [vs | G.CyclicSCC vs <- sccs]
  where
-  go (visited, cycles) node
-    | Set.member node visited = (visited, cycles)
-    | otherwise =
-        let (visited', newCycles) = findCycles Set.empty [] visited node
-         in (visited', cycles ++ newCycles)
-
-  findCycles stack currentPath visited node
-    | Set.member node stack =
-        -- Found a cycle in the current recursion stack
-        let cycle = reverse $ node : takeWhile (/= node) currentPath
-         in (visited, [cycle])
-    | Set.member node visited = (visited, []) -- Already fully explored
-    | otherwise =
-        let stack' = Set.insert node stack
-            path' = node : currentPath
-            neighbors = Map.findWithDefault Set.empty node graph
-            (visited'', childCycles) =
-              foldl
-                ( \(v, cs) n ->
-                    let (v', cs') = findCycles stack' path' v n
-                     in (v', cs ++ cs')
-                )
-                (visited, [])
-                (Set.toList neighbors)
-         in (Set.insert node visited'', childCycles)
+  adjList = [(n, n, Set.toList neighbors) | (n, neighbors) <- Map.toList graph]
+  sccs = G.stronglyConnComp adjList
