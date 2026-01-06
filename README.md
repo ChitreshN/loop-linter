@@ -46,3 +46,11 @@ The linter writes its findings to a log file in your project root:
 ```text
 loop-linter.log
 ```
+
+## 📖 Documentation
+
+Further details on the implementation and usage can be found in the `docs` directory:
+
+*   [Technical Design](docs/design.adoc): Detailed architectural decisions and algorithm descriptions.
+*   [Usage Guide](docs/documentation.adoc): Comprehensive guide on how the plugin works and its limitations.
+

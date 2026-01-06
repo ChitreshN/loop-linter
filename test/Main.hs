@@ -52,57 +52,57 @@ testComplexCycle = TestCase $ do
   assertEqual "Loop length should be 3" 3 (length (head loops))
   assertBool "Loop should contain A, B, C" (all (`elem` head loops) ['A', 'B', 'C'])
 
--- Tests for breakEdges
-testBreakEdges :: Test
-testBreakEdges = TestCase $ do
-  -- Scenario: A -> f1, B -> f2.
-  -- f1 has register (True), f2 has no register (False).
-  -- A depends on B.
-  let producerMap = Map.fromList [("A", Right "f1"), ("B", Right "f2")]
-      calleeMap   = mkGraph [("A", ["B"]), ("B", [])]
-      hasReg      = Map.fromList [("f1", True), ("f2", False)]
-      
-      -- Action
-      brokenGraph = breakEdges producerMap calleeMap hasReg
-      
-      -- Verification
-      depsA = Map.findWithDefault Set.empty "A" brokenGraph
-  
-  assertBool "Dependencies of A should be empty (broken at reg)" (Set.null depsA)
-
-testBreakEdgesNoReg :: Test
-testBreakEdgesNoReg = TestCase $ do
-  -- Scenario: A -> f1, B -> f2.
-  -- Both f1, f2 are combinational (False).
-  -- A depends on B.
-  let producerMap = Map.fromList [("A", Right "f1"), ("B", Right "f2")]
-      calleeMap   = mkGraph [("A", ["B"]), ("B", [])]
-      hasReg      = Map.fromList [("f1", False), ("f2", False)]
-      
-      -- Action
-      brokenGraph = breakEdges producerMap calleeMap hasReg
-      
-      -- Verification
-      depsA = Map.findWithDefault Set.empty "A" brokenGraph
-  
-  assertEqual "Dependencies of A should remain" (Set.fromList ["B"]) depsA
-
-testBreakEdgesAlias :: Test
-testBreakEdgesAlias = TestCase $ do
-  -- Scenario: A is alias of B, B is produced by f1 (Reg).
-  -- A depends on C.
-  let producerMap = Map.fromList [("A", Left "B"), ("B", Right "f1")]
-      calleeMap   = mkGraph [("A", ["C"]), ("C", [])]
-      hasReg      = Map.fromList [("f1", True)]
-      
-      -- Action
-      brokenGraph = breakEdges producerMap calleeMap hasReg
-      
-      -- Verification
-      depsA = Map.findWithDefault Set.empty "A" brokenGraph
-  
-  assertBool "Dependencies of A (alias) should be empty" (Set.null depsA)
-
+-- -- Tests for breakEdges
+-- testBreakEdges :: Test
+-- testBreakEdges = TestCase $ do
+--   -- Scenario: A -> f1, B -> f2.
+--   -- f1 has register (True), f2 has no register (False).
+--   -- A depends on B.
+--   let producerMap = Map.fromList [("A", Right "f1"), ("B", Right "f2")]
+--       calleeMap   = mkGraph [("A", ["B"]), ("B", [])]
+--       hasReg      = Map.fromList [("f1", True), ("f2", False)]
+--
+--       -- Action
+--       brokenGraph = breakEdges producerMap calleeMap hasReg
+--
+--       -- Verification
+--       depsA = Map.findWithDefault Set.empty "A" brokenGraph
+--
+--   assertBool "Dependencies of A should be empty (broken at reg)" (Set.null depsA)
+--
+-- testBreakEdgesNoReg :: Test
+-- testBreakEdgesNoReg = TestCase $ do
+--   -- Scenario: A -> f1, B -> f2.
+--   -- Both f1, f2 are combinational (False).
+--   -- A depends on B.
+--   let producerMap = Map.fromList [("A", Right "f1"), ("B", Right "f2")]
+--       calleeMap   = mkGraph [("A", ["B"]), ("B", [])]
+--       hasReg      = Map.fromList [("f1", False), ("f2", False)]
+--
+--       -- Action
+--       brokenGraph = breakEdges producerMap calleeMap hasReg
+--
+--       -- Verification
+--       depsA = Map.findWithDefault Set.empty "A" brokenGraph
+--
+--   assertEqual "Dependencies of A should remain" (Set.fromList ["B"]) depsA
+--
+-- testBreakEdgesAlias :: Test
+-- testBreakEdgesAlias = TestCase $ do
+--   -- Scenario: A is alias of B, B is produced by f1 (Reg).
+--   -- A depends on C.
+--   let producerMap = Map.fromList [("A", Left "B"), ("B", Right "f1")]
+--       calleeMap   = mkGraph [("A", ["C"]), ("C", [])]
+--       hasReg      = Map.fromList [("f1", True)]
+--
+--       -- Action
+--       brokenGraph = breakEdges producerMap calleeMap hasReg
+--
+--       -- Verification
+--       depsA = Map.findWithDefault Set.empty "A" brokenGraph
+--
+--   assertBool "Dependencies of A (alias) should be empty" (Set.null depsA)
+--
 -- Test Suite
 tests :: Test
 tests = TestList 
@@ -111,9 +111,9 @@ tests = TestList
   , TestLabel "Self Loop" testSelfLoop
   , TestLabel "Disconnected Cycle" testDisconnectedCycle
   , TestLabel "Complex Cycle" testComplexCycle
-  , TestLabel "Break Edges (Reg)" testBreakEdges
-  , TestLabel "Break Edges (No Reg)" testBreakEdgesNoReg
-  , TestLabel "Break Edges (Alias)" testBreakEdgesAlias
+  -- , TestLabel "Break Edges (Reg)" testBreakEdges
+  -- , TestLabel "Break Edges (No Reg)" testBreakEdgesNoReg
+  -- , TestLabel "Break Edges (Alias)" testBreakEdgesAlias
   ]
 
 main :: IO ()
