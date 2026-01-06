@@ -1,6 +1,8 @@
 cabal-version:      2.4
 name:               loop-linter
 version:            0.1.0.0
+license:            GPL-3.0-only
+license-file:       LICENSE
 
 library
   exposed-modules:
