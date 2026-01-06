@@ -24,14 +24,10 @@ breakEdges ::
 breakEdges producerMap calleeMap hasRegCheck = updatedMap
  where
   updatedMap = Map.mapWithKey helper calleeMap
-  helper k v = edges
-   where
-    edges = case findProducer producerMap k of
-      Nothing -> v
-      Just f ->
-        if hasRegCheck f
-          then Set.empty -- remove edges if function has a reg
-          else v
+  helper k v = 
+    let edgeList = Set.toList v
+        reg = any hasRegCheck edgeList
+    in if reg then Set.empty else v
 
 detectLoops :: (Ord a) => Map.Map a (Set.Set a) -> [[a]]
 detectLoops graph = filter (not . null) $ snd $ foldl go (Set.empty, []) (Map.keys graph)

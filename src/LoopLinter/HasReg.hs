@@ -1,8 +1,11 @@
 module LoopLinter.HasReg where
 
+import qualified Data.Map as Map
 import GHC.Core
 import GHC.Plugins
 import LoopLinter.RegPrimitives
+import LoopLinter.Registry (Registry, idToKey)
+
 
 idHasRegister :: Id -> Bool
 idHasRegister v = 
@@ -31,6 +34,29 @@ exprHasReg = go
         Rec pairs    -> any (go . snd) pairs || go body
   go (Case scrut _ _ alts) =
       go scrut || all (\(Alt _ _ rhs) -> go rhs) alts
+  go (Cast e _) = go e
+  go (Tick _ e) = go e
+  go (Type _) = False
+  go (Coercion _) = False
+
+localExprHasReg :: Map.Map Id Bool -> Registry -> CoreExpr -> Bool
+localExprHasReg directHasReg globalRegistry = go
+ where
+  go (Var v)
+    | isId v =
+        idHasRegister v
+          || Map.findWithDefault False v directHasReg
+          || Map.findWithDefault False (idToKey v) globalRegistry
+  go (Var _) = False
+  go (Lit _) = False
+  go (App e1 e2) = go e1 || go e2
+  go (Lam _ e) = go e
+  go (Let bind body) =
+    case bind of
+      NonRec _ rhs -> go rhs || go body
+      Rec pairs -> any (go . snd) pairs || go body
+  go (Case scrut _ _ alts) =
+    go scrut || all (\(Alt _ _ rhs) -> go rhs) alts
   go (Cast e _) = go e
   go (Tick _ e) = go e
   go (Type _) = False
