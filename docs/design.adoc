@@ -1,0 +1,123 @@
+= Loop Linter: Technical Design Document
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlightjs
+
+== 1. Introduction
+
+The **Loop Linter** is a static analysis tool implemented as a GHC Core-to-Core plugin. It identifies combinational loops in Clash hardware designs by analyzing the underlying GHC Core representation. This document details the architectural decisions, data structures, and algorithms used to achieve cross-module loop detection.
+
+== 2. Architecture Overview
+
+The linter is integrated into the GHC compilation pipeline. It executes after the **Desugarer** and initial **Simplifier** passes. This timing is critical: the code is simple enough to analyze (Core) but hasn't been so heavily optimized that all user intent is lost.
+
+The system consists of four primary components:
+
+1.  **Core Analyzer (`HasReg.hs`)**: Performs a recursive check on expressions to identify sequential logic.
+2.  **Registry (`Registry.hs`)**: Manages disk-based persistence of `hasReg` metadata for cross-module visibility.
+3.  **Graph Engine (`Graph.hs`, `MapBuilder.hs`)**: Constructs a directed dependency graph of signals.
+4.  **Plugin Driver (`Plugin.hs`)**: Coordinates the passes and manages IO operations.
+
+== 3. Core Analysis Logic
+
+The fundamental question the linter asks is: *"Does this expression introduce a register boundary?"*
+
+=== 3.1. Primitive Recognition
+The analysis starts with a hardcoded list of Clash primitives in `RegPrimitives.hs`. We identify functions like `register`, `mealy`, `moore`, and `blockRam`. 
+
+[IMPORTANT]
+====
+Currently, identification is based on `OccName` and `ModuleName`. A future improvement will use GHC `Unique`s or `Wire` annotations for higher precision.
+====
+
+=== 3.2. Recursive Expression Traversal
+The function `exprHasReg :: CoreExpr -> Bool` performs a deep walk of the expression tree:
+
+*   **Var**: If it's a primitive register, return `True`.
+*   **App**: If either the function or the argument contains a register, return `True`.
+*   **Let**: Analyzes both the bindings and the body.
+*   **Case**: Analyzes the scrutinee and all branches.
+
+This allows the linter to see through wrappers. If a user defines `myReg = register 0`, the linter identifies `myReg` as sequential.
+
+== 4. Cross-Module Registry System
+
+GHC analyzes one module at a time. To detect a loop between `Module A` and `Module B`, we must persist metadata.
+
+=== 4.1. Persistence Mechanism
+We use a file-based store in `.loop-linter-store/`.
+
+*   **Format**: Each module generates a `.reginfo` file containing a serialized `Map String Bool`.
+*   **Keys**: We use **Fully Qualified Names** (e.g., `Pentarisc.Prediction.BPU.mkBPU`). This is essential because simple names like `ds` or `mkBPU` are not unique across the whole project.
+*   **Mapping**: `Registry.hs` provides `idToKey :: Id -> String` to bridge the gap between GHC's volatile `Id` types and persistent strings.
+
+=== 4.2. Incremental Loading
+When `analyzeModule` starts, it loads **all** existing `.reginfo` files. Since GHC compiles dependencies before dependents, the registry for an imported module is guaranteed to exist by the time the importing module is analyzed.
+
+== 5. Graph Engine and Cycle Detection
+
+The linter models the hardware as a netlist where wires are nodes and components are edges.
+
+=== 5.1. The Producer Map
+`buildProducerMap` creates a mapping of `Signal -> Producer`.
+It uses an `Either Id Id` structure:
+
+*   **`Left alias`**: Indicates a direct wire connection (e.g., `x = y`). The resolver follows these links to find the ultimate source.
+*   **`Right func`**: Indicates the signal is the output of a function/component (e.g., `x = mkBPU ...`).
+
+=== 5.2. The Callee Map (Dependency Graph)
+`collectCallees` identifies every signal a binding depends on. 
+
+*   **Head Filtering**: When analyzing `x = f a b`, we collect `{a, b}` as dependencies but **ignore** `f`. Including `f` in the dependency set would create "false loops" where every call to `f` depends on the definition of `f`.
+*   **Nested Apps**: Core represents `f a b` as `App (App f a) b`. The engine recursively descends these nodes to extract all arguments while discarding the leading `Var` (the function name).
+
+=== 5.3. Edge Breaking
+Before cycle detection, we call `breakEdges`. This is the "magic" of the linter:
+
+1.  Iterate through every node in the graph.
+2.  Find its **Producer** using the Registry and Local Analysis.
+3.  If the Producer is **Sequential** (has a register), **delete all incoming edges** to that node.
+4.  Effectively, this turns a sequential loop into two disconnected paths, which DFS will ignore.
+
+=== 5.4. DFS Cycle Detection
+We use a standard DFS with a recursion stack.
+
+*   **Visited Set**: Prevents re-analyzing the same subgraph.
+*   **Path Stack**: Keeps track of the current traversal. If we encounter a node already in the stack, we have found a **Combinational Loop**.
+
+== 6. Handling Desugared Artifacts
+
+GHC desugars high-level Haskell into "Tuple Bundles". This is why you see many `ds` variables.
+
+=== 6.1. The `ds` Problem
+[source,haskell]
+----
+(a, b) = func x
+----
+becomes:
+[source,haskell]
+----
+ds = func x
+a = case ds of (p, q) -> p
+b = case ds of (p, q) -> q
+----
+The loop detection identifies `ds` as a node. Since `ds` is produced by `func`, if `func` is combinational, the edges stay. If `func` is sequential, the edges to `ds` are broken, and thus `a` and `b` also become "safe" nodes.
+
+=== 6.2. Name Recovery
+Because GHC's Simplifier often inlines variables, the "user-friendly" name (like `readyDecode`) might be deleted, leaving only the `ds` bundle. The linter compensates by reporting the **Producer Function**, which is usually stable and recognizable to the engineer.
+
+== 7. Performance and Optimization
+
+*   **Registry IO**: Loading many small files can be slow. Future versions should use a single binary database with file-locking or a persistent daemon.
+*   **Graph Size**: For large designs like `pentariscAlpha`, the graph can have thousands of nodes. The use of `Data.Map` and `Data.Set` ensures `O(log N)` lookups, and the DFS is `O(V + E)`.
+
+== 8. Summary of Analysis Workflow
+
+1.  **Parse Core**: Extract all `Rec` and `NonRec` bindings.
+2.  **Local Register Check**: Run `exprHasReg` on every binding.
+3.  **Registry Sync**: Save local results; load results from other modules.
+4.  **Build Graph**: Map signals to their arguments.
+5.  **Prune Graph**: Remove edges that pass through nodes where `hasRegCheck` is True.
+6.  **Find Cycles**: Run DFS on the pruned graph.
+7.  **Log**: Write results to `loop-linter.log`.
